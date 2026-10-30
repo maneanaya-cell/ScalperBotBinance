@@ -36,13 +36,10 @@ def run_bot():
         print(f"Conexión exitosa. Saldo disponible en USDT: {usdt_balance}")
 
         # --- AQUÍ VA TU LÁGICA DE TRADING / ESTRATEGIA ---
-        # Ejemplo de lectura de velas (OHLCV) para tus indicadores técnicos:
         ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
         print(f"Datos de {SYMBOL} obtenidos correctamente. Último precio de cierre: {df['close'].iloc[-1]}")
-        
-        # Implementa aquí tus lógica de señales, órdenes STOP_MARKET, TRAILING_STOP_MARKET, etc.
 
     except Exception as e:
         print(f"Error en la ejecución del bot: {e}")
@@ -51,6 +48,5 @@ if __name__ == "__main__":
     print("Iniciando Bot de Binance para Railway (Modo 24/7)...")
     while True:
         run_bot()
-        # Espera 15 minutos (900 segundos) antes de la siguiente ejecución
         print("Esperando 15 minutos para la siguiente ejecución...\n")
         time.sleep(900)
