@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot de Binance Futures con Trailing Stop y Extremos Activo 24/7 🚀"
+    return "Bot de Binance Futures (BTC/USDC) con Trailing Ajustado Activo 24/7 🚀"
 
 @app.route('/health')
 def health():
@@ -77,18 +77,23 @@ def run_bot():
         'enableRateLimit': True,
         'options': {
             'defaultType': 'future',
+            'settle': 'USDC' 
         }
     })
 
-    SYMBOL = 'BTC/USDT'
+    SYMBOL = 'BTC/USDC'
     TIMEFRAME = '15m'
     LEVERAGE = 10
+    MIN_NOTIONAL_USDC = 8.0  # Margen seguro por encima del mínimo de 7.5 USDC de Binance
 
     # Variables de control para el Trailing Stop en memoria
     position_state = {
         'active': False,
-        'side': None,       # 'BUY' o 'SELL'
-        'extreme_price': 0  # Máximo alcanzado en Long o Mínimo alcanzado en Short
+        'side': None,            # 'BUY' o 'SELL'
+        'entry_price': 0,        # Precio de entrada
+        'extreme_price': 0,      # Máximo/Mínimo favorable alcanzado
+        'trailing_active': False,# Se vuelve True al alcanzar 0.3% de ganancia
+        'current_stop': 0        # Nivel actual del Stop Loss dinámico
     }
 
     try:
@@ -103,8 +108,8 @@ def run_bot():
             print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Analizando mercado para {SYMBOL}...")
             
             balance = exchange.fetch_balance()
-            usdt_balance = balance['USDT']['free']
-            print(f"Saldo disponible USDT: {usdt_balance}")
+            usdc_balance = balance['USDC']['free'] if 'USDC' in balance else 0
+            print(f"Saldo disponible USDC: {usdc_balance}")
 
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=100)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -132,76 +137,117 @@ def run_bot():
             has_open_position = any(float(p['contracts']) > 0 for p in positions if p['symbol'] == SYMBOL)
 
             if has_open_position:
-                # --- GESTIÓN DE TRAILING STOP PARA POSICIÓN ABIERTA ---
+                # --- GESTIÓN DE TRAILING STOP (Gatillo 0.3% -> Fija 0.2% -> Distancia 1.5*ATR) ---
                 print("Posición activa detectada. Evaluando Trailing Stop...")
                 
-                # Identificar el lado de la posición abierta en Binance
                 current_pos = next(p for p in positions if p['symbol'] == SYMBOL and float(p['contracts']) > 0)
                 pos_side = current_pos['side']  # 'long' o 'short'
                 contracts_amount = float(current_pos['contracts'])
+                entry_price = float(current_pos.get('entryPrice', last_close))
 
                 if pos_side == 'long':
                     if not position_state['active'] or position_state['side'] != 'BUY':
                         position_state['active'] = True
                         position_state['side'] = 'BUY'
+                        position_state['entry_price'] = entry_price
                         position_state['extreme_price'] = last_close
+                        position_state['trailing_active'] = False
+                        position_state['current_stop'] = 0
 
-                    # Actualizar el precio máximo alcanzado
+                    # Actualizar precio máximo favorable
                     if last_close > position_state['extreme_price']:
                         position_state['extreme_price'] = last_close
 
-                    # Calcular nivel de Stop Dinámico (ej: 2 veces el ATR por debajo del máximo)
-                    trailing_stop_price = position_state['extreme_price'] - (2 * last_atr)
-                    print(f"Trailing Stop Long activo -> Máximo: {position_state['extreme_price']} | Stop Loss dinámico: {trailing_stop_price:.2f}")
+                    # Calcular beneficio porcentual actual
+                    profit_pct = (last_close - position_state['entry_price']) / position_state['entry_price']
 
-                    # Si el precio toca o cae por debajo del trailing stop, cerramos
-                    if last_close <= trailing_stop_price:
-                        print("¡Precio alcanzó el Trailing Stop! Cerrando posición LONG...")
-                        exchange.create_market_sell_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
-                        position_state['active'] = False
+                    # 1. Si alcanza el 0.3% de ganancia, activamos el trailing y fijamos el stop en el 0.2% de ganancia
+                    if not position_state['trailing_active'] and profit_pct >= 0.003:
+                        position_state['trailing_active'] = True
+                        # Precio exacto que representa un 0.2% de ganancia sobre la entrada
+                        position_state['current_stop'] = position_state['entry_price'] * 1.002
+                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}")
+
+                    if position_state['trailing_active']:
+                        # 2. Calcular la distancia dinámica a 1.5 * ATR desde el precio extremo alcanzado
+                        atr_based_stop = position_state['extreme_price'] - (1.5 * last_atr)
+                        
+                        # El stop nunca retrocede: toma el valor más alto entre el stop asegurado (0.2%) y el avance del ATR
+                        if atr_based_stop > position_state['current_stop']:
+                            position_state['current_stop'] = atr_based_stop
+
+                        print(f"Trailing Long -> Máximo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}")
+
+                        # Si el precio toca o cae por debajo del stop dinámico, cerramos
+                        if last_close <= position_state['current_stop']:
+                            print("¡Precio tocó el Trailing Stop! Cerrando posición LONG...")
+                            exchange.create_market_sell_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
+                            position_state['active'] = False
+                    else:
+                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.")
 
                 elif pos_side == 'short':
                     if not position_state['active'] or position_state['side'] != 'SELL':
                         position_state['active'] = True
                         position_state['side'] = 'SELL'
+                        position_state['entry_price'] = entry_price
                         position_state['extreme_price'] = last_close
+                        position_state['trailing_active'] = False
+                        position_state['current_stop'] = 0
 
-                    # Actualizar el precio mínimo alcanzado
+                    # Actualizar precio mínimo favorable
                     if last_close < position_state['extreme_price']:
                         position_state['extreme_price'] = last_close
 
-                    # Calcular nivel de Stop Dinámico para Short (ej: 2 veces el ATR por encima del mínimo)
-                    trailing_stop_price = position_state['extreme_price'] + (2 * last_atr)
-                    print(f"Trailing Stop Short activo -> Mínimo: {position_state['extreme_price']} | Stop Loss dinámico: {trailing_stop_price:.2f}")
+                    # Calcular beneficio porcentual para short
+                    profit_pct = (position_state['entry_price'] - last_close) / position_state['entry_price']
 
-                    # Si el precio sube y toca el trailing stop, cerramos
-                    if last_close >= trailing_stop_price:
-                        print("¡Precio alcanzó el Trailing Stop! Cerrando posición SHORT...")
-                        exchange.create_market_buy_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
-                        position_state['active'] = False
+                    # 1. Activación al 0.3% de ganancia -> Stop asegurado en 0.2% de ganancia bajista
+                    if not position_state['trailing_active'] and profit_pct >= 0.003:
+                        position_state['trailing_active'] = True
+                        position_state['current_stop'] = position_state['entry_price'] * 0.998
+                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}")
+
+                    if position_state['trailing_active']:
+                        # 2. Distancia a 1.5 * ATR para Short
+                        atr_based_stop = position_state['extreme_price'] + (1.5 * last_atr)
+                        
+                        # El stop para short baja (se vuelve más restrictivo) sin retroceder
+                        if atr_based_stop < position_state['current_stop']:
+                            position_state['current_stop'] = atr_based_stop
+
+                        print(f"Trailing Short -> Mínimo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}")
+
+                        if last_close >= position_state['current_stop']:
+                            print("¡Precio tocó el Trailing Stop! Cerrando posición SHORT...")
+                            exchange.create_market_buy_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
+                            position_state['active'] = False
+                    else:
+                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.")
 
             else:
-                # Si no hay posición abierta, reiniciamos el estado del trailing
                 position_state['active'] = False
+                position_state['trailing_active'] = False
                 
-                # --- EVALUAR NUEVAS ENTRADAS (FILTRO DE EXTREMOS + DIVERGENCIA) ---
+                # --- EVALUAR NUEVAS ENTRADAS (EXTREMOS DEL CANAL + 7.5 USDC MÍNIMO) ---
                 signal = check_rsi_divergence(df)
+
+                notional_target = MIN_NOTIONAL_USDC
+                calculated_amount = round(notional_target / last_close, 4)
 
                 if channel_position < 0.2:
                     print("Precio en EXTREMO INFERIOR (Soporte).")
                     if signal == 'BUY' and last_close > ema_200:
-                        print("¡Entrada BUY confirmada en soporte con divergencia alcista!")
-                        amount = 0.001
-                        exchange.create_market_buy_order(SYMBOL, amount)
+                        print(f"¡Entrada BUY confirmada! Ejecutando con tamaño: {calculated_amount} BTC")
+                        exchange.create_market_buy_order(SYMBOL, calculated_amount)
                     else:
                         print("En soporte, pero sin señal clara de divergencia/tendencia.")
 
                 elif channel_position > 0.8:
-                    print("Precio en EXTREMO SUPERIOR (Resistencia).")
+                    print("Precio en EXTREMO RESISTENCIA.")
                     if signal == 'SELL' and last_close < ema_200:
-                        print("¡Entrada SELL confirmada en resistencia con divergencia bajista!")
-                        amount = 0.001
-                        exchange.create_market_sell_order(SYMBOL, amount)
+                        print(f"¡Entrada SELL confirmada! Ejecutando con tamaño: {calculated_amount} BTC")
+                        exchange.create_market_sell_order(SYMBOL, calculated_amount)
                     else:
                         print("En resistencia, pero sin señal clara de divergencia/tendencia.")
                 else:
