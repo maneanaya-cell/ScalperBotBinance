@@ -111,7 +111,7 @@ def run_bot():
             usdc_balance = balance['USDC']['free'] if 'USDC' in balance else 0
             print(f"Saldo disponible USDC: {usdc_balance}")
 
-            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=100)
+            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=300)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
             # Indicadores
