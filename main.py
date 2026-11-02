@@ -36,7 +36,7 @@ def calculate_atr(df, period=14):
     true_range = np.max(ranges, axis=1)
     return true_range.rolling(window=period).mean()
 
-def calculate_channels(df, period=20):
+def calculate_channels(df, period=134):
     df['channel_high'] = df['high'].rolling(window=period).max()
     df['channel_low'] = df['low'].rolling(window=period).min()
     return df
@@ -118,7 +118,7 @@ def run_bot():
             df['ema_200'] = calculate_ema(df['close'], 200)
             df['rsi'] = calculate_rsi(df['close'], 14)
             df['atr'] = calculate_atr(df, 14)
-            df = calculate_channels(df, period=20)
+            df = calculate_channels(df, period=134)
 
             last_close = df['close'].iloc[-1]
             last_rsi = df['rsi'].iloc[-1]
