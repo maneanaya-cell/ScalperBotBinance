@@ -68,7 +68,7 @@ def run_bot():
     SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
     if not API_KEY or not SECRET_KEY:
-        print("Error: No se encontraron las credenciales BINANCE_API_KEY o SECRET_KEY.")
+        print("Error: No se encontraron las credenciales BINANCE_API_KEY o SECRET_KEY.", flush=True)
         return
 
     exchange = ccxt.binance({
@@ -99,17 +99,17 @@ def run_bot():
     try:
         exchange.load_markets()
         exchange.set_leverage(LEVERAGE, SYMBOL)
-        print(f"Apalancamiento configurado a {LEVERAGE}x para {SYMBOL}")
+        print(f"Apalancamiento configurado a {LEVERAGE}x para {SYMBOL}", flush=True)
     except Exception as e:
-        print(f"Nota al configurar apalancamiento: {e}")
+        print(f"Nota al configurar apalancamiento: {e}", flush=True)
 
     while True:
         try:
-            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Analizando mercado para {SYMBOL}...")
+            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Analizando mercado para {SYMBOL}...", flush=True)
             
             balance = exchange.fetch_balance()
             usdc_balance = balance['USDC']['free'] if 'USDC' in balance else 0
-            print(f"Saldo disponible USDC: {usdc_balance}")
+            print(f"Saldo disponible USDC: {usdc_balance}", flush=True)
 
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=300)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -130,7 +130,7 @@ def run_bot():
             ch_range = ch_high - ch_low
             channel_position = (last_close - ch_low) / ch_range if ch_range > 0 else 0.5
 
-            print(f"Precio: {last_close} | RSI: {last_rsi:.2f} | ATR: {last_atr:.2f} | Canal Pos: {channel_position:.2f}")
+            print(f"Precio: {last_close} | RSI: {last_rsi:.2f} | ATR: {last_atr:.2f} | Canal Pos: {channel_position:.2f}", flush=True)
 
             # Verificar estado real de posiciones en Binance
             positions = exchange.fetch_positions([SYMBOL])
@@ -138,7 +138,7 @@ def run_bot():
 
             if has_open_position:
                 # --- GESTIÓN DE TRAILING STOP (Gatillo 0.3% -> Fija 0.2% -> Distancia 1.5*ATR) ---
-                print("Posición activa detectada. Evaluando Trailing Stop...")
+                print("Posición activa detectada. Evaluando Trailing Stop...", flush=True)
                 
                 current_pos = next(p for p in positions if p['symbol'] == SYMBOL and float(p['contracts']) > 0)
                 pos_side = current_pos['side']  # 'long' o 'short'
@@ -166,7 +166,7 @@ def run_bot():
                         position_state['trailing_active'] = True
                         # Precio exacto que representa un 0.2% de ganancia sobre la entrada
                         position_state['current_stop'] = position_state['entry_price'] * 1.002
-                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}")
+                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}", flush=True)
 
                     if position_state['trailing_active']:
                         # 2. Calcular la distancia dinámica a 1.5 * ATR desde el precio extremo alcanzado
@@ -176,15 +176,15 @@ def run_bot():
                         if atr_based_stop > position_state['current_stop']:
                             position_state['current_stop'] = atr_based_stop
 
-                        print(f"Trailing Long -> Máximo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}")
+                        print(f"Trailing Long -> Máximo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}", flush=True)
 
                         # Si el precio toca o cae por debajo del stop dinámico, cerramos
                         if last_close <= position_state['current_stop']:
-                            print("¡Precio tocó el Trailing Stop! Cerrando posición LONG...")
+                            print("¡Precio tocó el Trailing Stop! Cerrando posición LONG...", flush=True)
                             exchange.create_market_sell_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
                             position_state['active'] = False
                     else:
-                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.")
+                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.", flush=True)
 
                 elif pos_side == 'short':
                     if not position_state['active'] or position_state['side'] != 'SELL':
@@ -206,7 +206,7 @@ def run_bot():
                     if not position_state['trailing_active'] and profit_pct >= 0.003:
                         position_state['trailing_active'] = True
                         position_state['current_stop'] = position_state['entry_price'] * 0.998
-                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}")
+                        print(f"¡Ganancia del 0.3% alcanzada! Trailing activado. Stop inicial asegurado en 0.2% de ganancia: {position_state['current_stop']:.2f}", flush=True)
 
                     if position_state['trailing_active']:
                         # 2. Distancia a 1.5 * ATR para Short
@@ -216,14 +216,14 @@ def run_bot():
                         if atr_based_stop < position_state['current_stop']:
                             position_state['current_stop'] = atr_based_stop
 
-                        print(f"Trailing Short -> Mínimo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}")
+                        print(f"Trailing Short -> Mínimo: {position_state['extreme_price']} | Stop Dinámico: {position_state['current_stop']:.2f}", flush=True)
 
                         if last_close >= position_state['current_stop']:
-                            print("¡Precio tocó el Trailing Stop! Cerrando posición SHORT...")
+                            print("¡Precio tocó el Trailing Stop! Cerrando posición SHORT...", flush=True)
                             exchange.create_market_buy_order(SYMBOL, contracts_amount, params={'reduceOnly': True})
                             position_state['active'] = False
                     else:
-                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.")
+                        print(f"Ganancia actual: {profit_pct*100:.3f}%. Esperando llegar a 0.3% para activar trailing.", flush=True)
 
             else:
                 position_state['active'] = False
@@ -236,27 +236,27 @@ def run_bot():
                 calculated_amount = round(notional_target / last_close, 4)
 
                 if channel_position < 0.2:
-                    print("Precio en EXTREMO INFERIOR (Soporte).")
+                    print("Precio en EXTREMO INFERIOR (Soporte).", flush=True)
                     if signal == 'BUY' and last_close > ema_200:
-                        print(f"¡Entrada BUY confirmada! Ejecutando con tamaño: {calculated_amount} BTC")
+                        print(f"¡Entrada BUY confirmada! Ejecutando con tamaño: {calculated_amount} BTC", flush=True)
                         exchange.create_market_buy_order(SYMBOL, calculated_amount)
                     else:
-                        print("En soporte, pero sin señal clara de divergencia/tendencia.")
+                        print("En soporte, pero sin señal clara de divergencia/tendencia.", flush=True)
 
                 elif channel_position > 0.8:
-                    print("Precio en EXTREMO RESISTENCIA.")
+                    print("Precio en EXTREMO RESISTENCIA.", flush=True)
                     if signal == 'SELL' and last_close < ema_200:
-                        print(f"¡Entrada SELL confirmada! Ejecutando con tamaño: {calculated_amount} BTC")
+                        print(f"¡Entrada SELL confirmada! Ejecutando con tamaño: {calculated_amount} BTC", flush=True)
                         exchange.create_market_sell_order(SYMBOL, calculated_amount)
                     else:
-                        print("En resistencia, pero sin señal clara de divergencia/tendencia.")
+                        print("En resistencia, pero sin señal clara de divergencia/tendencia.", flush=True)
                 else:
-                    print("Precio en el CENTRO del canal. Operación descartada por seguridad.")
+                    print("Precio en el CENTRO del canal. Operación descartada por seguridad.", flush=True)
 
         except Exception as e:
-            print(f"Error en la ejecución de la estrategia: {e}")
+            print(f"Error en la ejecución de la estrategia: {e}", flush=True)
 
-        print("Esperando 15 minutos para el siguiente ciclo...\n")
+        print("Esperando 15 minutos para el siguiente ciclo...\n", flush=True)
         time.sleep(900)
 
 if __name__ == "__main__":
